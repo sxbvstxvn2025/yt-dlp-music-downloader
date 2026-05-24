@@ -317,7 +317,9 @@ def download_tracks(top_tracks, artist_name, sequential=False):
             "--audio-quality", "192k",       # Optimized 192kbps (saves 40% size, matches YT limit)
             "--output", out_template,        # Output target path template
             "--no-playlist",                 # Focus strictly on this single track
-            "--no-warnings"
+            "--no-warnings",
+            "--force-ipv4",                  # Bypasses IPv6 lookup delays/timeouts on Windows
+            "--extractor-args", "youtube:player_client=android,web" # Bypasses YouTube's server-side download rate-throttling
         ]
         
         # In parallel mode, keep quiet. In sequential mode, let yt-dlp print native progress bar
