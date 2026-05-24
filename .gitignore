@@ -1,0 +1,7 @@
+# Ignore all downloaded music subdirectories in the workspace
+/*/
+
+# Track project configuration and source files strictly
+!/download_artist_top20.py
+!/README.md
+!/.gitignore
