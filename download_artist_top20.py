@@ -28,6 +28,8 @@ import re
 import json
 import shutil
 import subprocess
+import threading
+from concurrent.futures import ThreadPoolExecutor
 
 # Define colors for beautiful, modern CLI output (supported on Windows 10+ and UNIX)
 class Colors:
@@ -223,50 +225,59 @@ def process_entries(entries, artist_name):
     
     # Return the top 20 candidates
     return candidates[:20]
-
-
 def download_tracks(top_tracks, artist_name):
     """
-    Downloads each filtered track individually, showing clean progress and isolating errors.
+    Downloads the top tracks in parallel using a ThreadPoolExecutor, showing clean
+    and thread-safe progress and isolating individual download errors.
     """
-    # Create the artist's directory
     folder_name = sanitize_filename(artist_name)
     os.makedirs(folder_name, exist_ok=True)
     
     total = len(top_tracks)
     print(f"\n{Colors.HEADER}{Colors.BOLD}📂 Organizing files in: '{folder_name}'{Colors.ENDC}")
-    print(f"{Colors.HEADER}📥 Total tracks queued for download: {total}{Colors.ENDC}\n")
+    print(f"{Colors.HEADER}📥 Total tracks queued for parallel download: {total}{Colors.ENDC}\n")
     
     success_count = 0
     failed_tracks = []
     
-    for idx, track in enumerate(top_tracks, 1):
+    # Thread locks for safe console print and shared collections
+    print_lock = threading.Lock()
+    success_lock = threading.Lock()
+    failed_lock = threading.Lock()
+    
+    def safe_print(msg):
+        with print_lock:
+            print(msg)
+            
+    def download_single_track(idx_track_tuple):
+        nonlocal success_count
+        idx, track = idx_track_tuple
         title = track["cleaned_title"]
         sanitized_title = sanitize_filename(title)
         url = track["url"]
         
-        # Output template directs yt-dlp to write directly into our directory with the clean title
         out_template = os.path.join(folder_name, f"{sanitized_title}.%(ext)s")
         
-        # Safely convert duration to integer minutes/seconds
+        # Safely convert duration and views
         duration_sec = int(float(track.get("duration") or 0))
         minutes = duration_sec // 60
         seconds = duration_sec % 60
-        
-        # Safely format view count
         views_val = int(float(track.get("view_count") or 0))
         
-        print(f"{Colors.OKBLUE}[{idx}/{total}]{Colors.ENDC} Downloading: {Colors.BOLD}{title}{Colors.ENDC}")
-        if views_val > 0:
-            print(f"      Views: {views_val:,} | Duration: {minutes}:{seconds:02d}")
-        else:
-            print(f"      Duration: {minutes}:{seconds:02d}")
-            
+        # Print starting log thread-safely
+        meta_str = f"Views: {views_val:,} | " if views_val > 0 else ""
+        meta_str += f"Duration: {minutes}:{seconds:02d}"
+        
+        safe_print(
+            f"{Colors.OKBLUE}[{idx}/{total}]{Colors.ENDC} 📥 {Colors.BOLD}Started download:{Colors.ENDC} {title}\n"
+            f"      ({meta_str})"
+        )
+        
         cmd = [
             "yt-dlp",
             "-x",                           # Extract audio
             "--audio-format", "mp3",         # Convert to mp3 format
-            "--audio-quality", "320k",       # Highest standard constant bitrate
+            "--audio-quality", "192k",       # Optimized 192kbps (saves 40% size, matches YT limit)
             "--output", out_template,        # Output target path template
             "--no-playlist",                 # Focus strictly on this single track
             "--no-warnings",
@@ -275,21 +286,28 @@ def download_tracks(top_tracks, artist_name):
         ]
         
         try:
-            # Execute download process synchronously
             subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, check=True)
-            print(f"      {Colors.OKGREEN}✓ Download and high-quality MP3 conversion successful!{Colors.ENDC}\n")
-            success_count += 1
+            safe_print(f"✅ {Colors.OKGREEN}[{idx}/{total}] Success:{Colors.ENDC} {title} (192kbps MP3)")
+            with success_lock:
+                success_count += 1
         except subprocess.CalledProcessError as e:
             error_msg = e.stderr.strip() if e.stderr else "Transcoding or download error"
-            print(f"      {Colors.FAIL}✗ Download failed! Error Details: {error_msg}{Colors.ENDC}\n")
-            failed_tracks.append((title, url, error_msg))
+            safe_print(f"❌ {Colors.FAIL}[{idx}/{total}] Failed:{Colors.ENDC} {title}\n      Reason: {error_msg}")
+            with failed_lock:
+                failed_tracks.append((title, url, error_msg))
         except Exception as e:
-            print(f"      {Colors.FAIL}✗ Unexpected error: {str(e)}{Colors.ENDC}\n")
-            failed_tracks.append((title, url, str(e)))
-            
+            safe_print(f"❌ {Colors.FAIL}[{idx}/{total}] Failed:{Colors.ENDC} {title}\n      Reason: {str(e)}")
+            with failed_lock:
+                failed_tracks.append((title, url, str(e)))
+
+    # Use ThreadPoolExecutor to download up to 4 tracks concurrently
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        # Pass tuples of (index, track) to map
+        executor.map(download_single_track, enumerate(top_tracks, 1))
+        
     # Process Completion Summary
     print(f"\n{Colors.BOLD}{Colors.OKGREEN}==================================================")
-    print(f"🎉 DOWNLOAD TASK COMPLETE!")
+    print(f"🎉 PARALLEL DOWNLOADS COMPLETE!")
     print(f"=================================================={Colors.ENDC}")
     print(f"   Successfully Downloaded: {success_count} / {total}")
     
@@ -299,8 +317,6 @@ def download_tracks(top_tracks, artist_name):
             print(f"   - {Colors.BOLD}{name}{Colors.ENDC} ({url})")
             print(f"     Reason: {err}")
     print()
-
-
 def main():
     print(f"{Colors.HEADER}{Colors.BOLD}==================================================")
     print("        ARTIST TOP 20 MP3 DOWNLOADER & CONVERTER")
