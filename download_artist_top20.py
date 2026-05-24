@@ -328,7 +328,7 @@ def main():
         "artist",
         nargs="*",
         default=[],
-        help="Name of the artist (will prompt if not provided)"
+        help="Name of the artist or comma-separated artists (will prompt if not provided)"
     )
     parser.add_argument(
         "--num", "-n",
@@ -369,39 +369,52 @@ def main():
         print()
         sys.exit(1)
         
-    # 3. Parse artist name or prompt interactively
-    artist_name = " ".join(args.artist).strip()
-    if not artist_name:
+    # 3. Parse artist list or prompt interactively
+    raw_artists = " ".join(args.artist).strip()
+    if not raw_artists:
         try:
-            artist_name = input(f"{Colors.BOLD}Enter the name of the artist: {Colors.ENDC}").strip()
+            raw_artists = input(f"{Colors.BOLD}Enter the name of the artist(s) (comma-separated for multiple): {Colors.ENDC}").strip()
         except (KeyboardInterrupt, EOFError):
             print("\nOperation cancelled by user.")
             sys.exit(0)
             
-    if not artist_name:
-        print(f"{Colors.FAIL}❌ Error: Artist name cannot be empty.{Colors.ENDC}")
+    if not raw_artists:
+        print(f"{Colors.FAIL}❌ Error: Artist list cannot be empty.{Colors.ENDC}")
         sys.exit(1)
         
-    # 4. Retrieve metadata search entries
-    entries = fetch_top_tracks(artist_name, num_songs=num_songs)
-    if not entries:
-        print(f"{Colors.FAIL}❌ No entries retrieved. Please check spelling, artist fame, or internet connection.{Colors.ENDC}")
-        sys.exit(1)
+    # Split by commas and sanitize individual artist names
+    artists = [a.strip() for a in raw_artists.split(",") if a.strip()]
+    total_artists = len(artists)
+    
+    print(f"{Colors.OKGREEN}✓ Queued {total_artists} artist(s) for automated batch download.{Colors.ENDC}")
+    
+    for idx_art, artist_name in enumerate(artists, 1):
+        print(f"\n{Colors.HEADER}{Colors.BOLD}==================================================")
+        print(f"       ARTIST [{idx_art}/{total_artists}]: {artist_name.upper()}")
+        print(f"=================================================={Colors.ENDC}\n")
         
-    # 5. Clean titles, filter duration, deduplicate, and sort
-    top_tracks = process_entries(entries, artist_name, num_songs=num_songs)
-    if not top_tracks:
-        print(f"{Colors.FAIL}❌ No items matched filtering criteria (valid music tracks).{Colors.ENDC}")
-        sys.exit(1)
+        # 4. Retrieve metadata search entries
+        entries = fetch_top_tracks(artist_name, num_songs=num_songs)
+        if not entries:
+            print(f"{Colors.FAIL}❌ No entries retrieved for '{artist_name}'. Skipping to next artist...{Colors.ENDC}")
+            continue
+            
+        # 5. Clean titles, filter duration, deduplicate, and sort
+        top_tracks = process_entries(entries, artist_name, num_songs=num_songs)
+        if not top_tracks:
+            print(f"{Colors.FAIL}❌ No items matched filtering criteria for '{artist_name}'. Skipping to next artist...{Colors.ENDC}")
+            continue
+            
+        # 6. Display identified top tracks
+        print(f"\n{Colors.OKGREEN}✓ Top tracks identified (sorted strictly by views):{Colors.ENDC}")
+        for idx, track in enumerate(top_tracks, 1):
+            views_str = f"{track['view_count']:,} views" if track['view_count'] > 0 else "View count unavailable"
+            print(f"   {idx:2d}. {Colors.BOLD}{track['cleaned_title']}{Colors.ENDC} ({views_str})")
+            
+        # 7. Execute downloads and audio extractions
+        download_tracks(top_tracks, artist_name)
         
-    # 6. Display identified top tracks
-    print(f"\n{Colors.OKGREEN}✓ Top tracks identified (sorted strictly by views):{Colors.ENDC}")
-    for idx, track in enumerate(top_tracks, 1):
-        views_str = f"{track['view_count']:,} views" if track['view_count'] > 0 else "View count unavailable"
-        print(f"   {idx:2d}. {Colors.BOLD}{track['cleaned_title']}{Colors.ENDC} ({views_str})")
-        
-    # 7. Execute downloads and audio extractions
-    download_tracks(top_tracks, artist_name)
+    print(f"\n{Colors.BOLD}{Colors.OKGREEN}✨ ALL BATCH DOWNLOADS FINISHED SUCCESSFULLY! ✨{Colors.ENDC}\n")
 
 
 if __name__ == "__main__":
