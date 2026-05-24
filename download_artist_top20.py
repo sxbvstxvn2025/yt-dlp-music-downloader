@@ -160,6 +160,20 @@ def fetch_top_tracks(artist_name, num_songs=20):
         return []
 
 
+def is_video_upload(title):
+    """
+    Checks if a video title contains keywords that indicate a music video or video clip
+    rather than a clean studio audio or art track.
+    """
+    title_lower = title.lower()
+    video_indicators = [
+        "video oficial", "official video", "music video", 
+        "video clip", "videoclip", "oficial video", 
+        "official music video", " m/v", " mv"
+    ]
+    return any(indicator in title_lower for indicator in video_indicators)
+
+
 def process_entries(entries, artist_name, num_songs=20):
     """
     Filters, deduplicates, and sorts the entries strictly by views to find the top unique songs.
@@ -207,13 +221,26 @@ def process_entries(entries, artist_name, num_songs=20):
             "search_rank": index  # Save rank as a fallback for popularity
         }
 
-        # 4. Smart Deduplication: Keep only the upload with the HIGHEST view count
+        # 4. Smart Deduplication: Prioritize clean studio audio over official music videos
         cleaned_lower = cleaned.lower()
+        is_video = is_video_upload(title)
+        
         if cleaned_lower not in processed:
             processed[cleaned_lower] = track_info
         else:
-            if views > processed[cleaned_lower]["view_count"]:
+            existing = processed[cleaned_lower]
+            existing_is_video = is_video_upload(existing["original_title"])
+            
+            # Prefer the clean audio track over the music video
+            if existing_is_video and not is_video:
                 processed[cleaned_lower] = track_info
+            elif not existing_is_video and is_video:
+                # Keep the existing clean audio track
+                pass
+            else:
+                # If both are of the same type (both audio or both video), keep the one with higher view count
+                if views > existing["view_count"]:
+                    processed[cleaned_lower] = track_info
 
     candidates = list(processed.values())
 
